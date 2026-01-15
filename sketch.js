@@ -1,11 +1,15 @@
 /**
+ * I made a draft of an image, 
+ * saved it as a svg vector file, 
+ * then converted the svg file into code, 
+ * then made some stylistic changes to code to create a final image.
+ * 
  * p5.js: Fully responsive "STEEP & FAST" angular mark
  * - ALWAYS fully visible at any window size/aspect ratio (auto-fit to computed bbox)
  * - Draws in DESIGN SPACE (units are stable)
  * - Computes true AABB of rotated+skewed plaques (+ safe margins for motifs/shadows)
  * - Text is rotated WITH the plaque and also SHEARED (skewed) for extra slant
  *
- * Paste into https://editor.p5js.org/
  */
 
 function setup() {
