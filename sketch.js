@@ -1,7 +1,11 @@
 /**
- * p5.js: Responsive "STEEP & FAST" angular logo (fully scales with window)
- * - Everything is drawn in normalized (0..1) space, so it scales perfectly.
- * - Consistent slant + aligned shadow/borders
+ * p5.js: Fully responsive "STEEP & FAST" angular mark
+ * - ALWAYS fully visible at any window size/aspect ratio (auto-fit to computed bbox)
+ * - Draws in DESIGN SPACE (units are stable)
+ * - Computes true AABB of rotated+skewed plaques (+ safe margins for motifs/shadows)
+ * - Text is rotated WITH the plaque and also SHEARED (skewed) for extra slant
+ *
+ * Paste into https://editor.p5js.org/
  */
 
 function setup() {
@@ -20,53 +24,84 @@ function windowResized() {
 function draw() {
   background(255);
 
-  // ---------- Theme ----------
+  // ---------------- THEME ----------------
   const theme = {
     ink: color(12, 16, 20),
     white: color(255),
     cool: color(0, 175, 170),
     warm: color(255, 85, 40),
     warm2: color(255, 180, 0),
+
     shadow: color(0, 0, 0, 35),
     stripeCool: color(0, 175, 170, 45),
     stripeWarm: color(255, 130, 80, 35),
   };
 
-  // ---------- Responsive scale helpers ----------
-  const U = Math.min(width, height); // master unit tied to window
-  const px = (n) => n * U;           // convert normalized units -> pixels
+  // ---------------- DESIGN SPACE ----------------
+  // Everything below is drawn in these "design units"
+  const slant = -0.14; // radians
+  const skewK = 0.45;  // parallelogram skew = h * skewK
 
-  // Layout in normalized units (relative to U)
-  const slant = -0.24;
+  // Plaque rectangles in design units
+  const steep = { x: 120, y: 120, w: 900, h: 220 };
+  const fast  = { x: 260, y: 330, w: 920, h: 220 };
 
-  const steep = { x: 0.12, y: 0.18, w: 1.05, h: 0.28 }; // note: can exceed 1 for dramatic crop
-  const fast  = { x: 0.25, y: 0.46, w: 1.08, h: 0.28 };
+  // Visual styling in design units
+  const borderW = 10;
+  const shadowOff = { x: 16, y: 16 };
 
-  // Keep mark centered regardless of window ratio
-  // We compute a "design bounds" in pixels, then center it.
-  const bounds = {
-    x: px(0.08),
-    y: px(0.10),
-    w: px(1.20),
-    h: px(0.78),
+  // Motifs extents: how far stuff extends beyond plaques (design units)
+  // (speed lines extend left; mountain extends up; shadows extend down/right)
+  const motifPad = {
+    left: 220,
+    right: 120,
+    top: 170,
+    bottom: 140,
   };
-  const ox = (width - bounds.w) / 2 - bounds.x;
-  const oy = (height - bounds.h) / 2 - bounds.y;
 
-  // Global stroke scaling
-  const borderW = px(0.015);
-  const shadowOff = createVector(px(0.018), px(0.018));
-  const skewK = 0.45; // skew = h * skewK
+  // ---------------- AUTO-FIT (guarantee visibility) ----------------
+  // Compute true bounding box of rotated+skewed plaques, then inflate for motifs + padding.
+  const pts = [
+    ...plaqueCorners(steep, slant, skewK),
+    ...plaqueCorners(fast,  slant, skewK),
 
+    // Include shadow corners too (offset same shape)
+    ...plaqueCorners(offsetRect(steep, shadowOff.x, shadowOff.y), slant, skewK),
+    ...plaqueCorners(offsetRect(fast,  shadowOff.x, shadowOff.y), slant, skewK),
+  ];
+
+  let bb = aabbFromPoints(pts);
+
+  // Inflate bbox for motifs that extend beyond plaques
+  bb.minX -= motifPad.left;
+  bb.maxX += motifPad.right;
+  bb.minY -= motifPad.top;
+  bb.maxY += motifPad.bottom;
+
+  bb.w = bb.maxX - bb.minX;
+  bb.h = bb.maxY - bb.minY;
+
+  // Pixel safe padding (keeps it away from window edges)
+  const padPx = 18;
+
+  // Fit scale to window
+  const s = Math.min((width - 2 * padPx) / bb.w, (height - 2 * padPx) / bb.h);
+
+  // Center the bbox in the window
+  const ox = (width  - bb.w * s) / 2 - bb.minX * s;
+  const oy = (height - bb.h * s) / 2 - bb.minY * s;
+
+  // ---------------- DRAW ----------------
   push();
   translate(ox, oy);
+  scale(s);
 
-  // Motifs
-  drawMountainHint(rectPx(steep, px), slant, theme, px);
-  drawSpeedLines(rectPx(fast, px), slant, theme, px);
+  // Motifs behind
+  drawMountainHint(steep, slant, theme);
+  drawSpeedLines(fast, slant, theme);
 
   // Plaques
-  drawPlaque(rectPx(steep, px), slant, theme, {
+  drawPlaque(steep, slant, theme, {
     borderColor: theme.cool,
     borderWeight: borderW,
     shadowOff,
@@ -74,7 +109,7 @@ function draw() {
     skewK,
   });
 
-  drawPlaque(rectPx(fast, px), slant, theme, {
+  drawPlaque(fast, slant, theme, {
     borderColor: theme.warm,
     borderWeight: borderW,
     shadowOff,
@@ -82,37 +117,77 @@ function draw() {
     skewK,
   });
 
-  // Fixed ampersand: clean badge, centered, not distorted
-  drawAmpBadgeBetween(rectPx(steep, px), rectPx(fast, px), slant, theme, {
+  // Ampersand badge (fixed + clean)
+  drawAmpBadgeBetween(steep, fast, slant, theme, {
     shadowOff,
     borderWeight: borderW * 0.85,
     skewK,
-    px,
   });
 
-  // Text (sizes scale with U)
-  drawWordInPlaque("STEEP", rectPx(steep, px), slant, theme, {
-    size: px(0.22),
-    tracking: px(0.010),
+  // Text (tilted + skewed)
+  drawWordInPlaque("STEEP", steep, slant, theme, {
+    size: 170,
+    tracking: 8,
     underline: true,
-    px,
+    // Text shear: small, to keep letters readable
+    textShearX: -0.25,
   });
 
-  drawWordInPlaque("FAST", rectPx(fast, px), slant, theme, {
-    size: px(0.22),
-    tracking: px(0.012),
+  drawWordInPlaque("FAST", fast, slant, theme, {
+    size: 170,
+    tracking: 10,
     underline: false,
-    px,
+    textShearX: -0.20,
   });
 
   pop();
 }
 
-/* -------------------- Core drawing -------------------- */
+/* ====================== AUTO-FIT HELPERS ====================== */
 
-function rectPx(r, px) {
-  return { x: px(r.x), y: px(r.y), w: px(r.w), h: px(r.h) };
+function offsetRect(r, dx, dy) {
+  return { x: r.x + dx, y: r.y + dy, w: r.w, h: r.h };
 }
+
+function plaqueCorners(box, ang, skewK) {
+  const skew = box.h * skewK;
+
+  // Parallelogram corners (unrotated), in world coords
+  const pts = [
+    { x: box.x + skew,         y: box.y },          // top-left
+    { x: box.x + box.w + skew, y: box.y },          // top-right
+    { x: box.x + box.w - skew, y: box.y + box.h },  // bottom-right
+    { x: box.x - skew,         y: box.y + box.h },  // bottom-left
+  ];
+
+  // rotate around center of the RECT (same as draw routine)
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+
+  const c = Math.cos(ang), s = Math.sin(ang);
+
+  return pts.map(p => {
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    return {
+      x: cx + dx * c - dy * s,
+      y: cy + dx * s + dy * c
+    };
+  });
+}
+
+function aabbFromPoints(points) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
+}
+
+/* ====================== DRAWING ====================== */
 
 function drawPlaque(box, ang, theme, opt) {
   const { borderColor, borderWeight, shadowOff, stripes, skewK } = opt;
@@ -136,7 +211,7 @@ function drawPlaque(box, ang, theme, opt) {
   fill(theme.ink);
   drawParallelogram(0, 0, box.w, box.h, skew);
 
-  // Stripe(s)
+  // Stripes
   if (stripes) {
     for (const st of stripes) {
       fill(st.c);
@@ -146,7 +221,7 @@ function drawPlaque(box, ang, theme, opt) {
     }
   }
 
-  // Accent border
+  // Border accent
   noFill();
   stroke(borderColor);
   strokeWeight(borderWeight);
@@ -158,12 +233,15 @@ function drawPlaque(box, ang, theme, opt) {
 }
 
 function drawWordInPlaque(word, box, ang, theme, opt) {
-  const { size, tracking, underline, px } = opt;
-  const skew = box.h * 0.45;
+  const { size, tracking, underline, textShearX } = opt;
 
   push();
   translate(box.x, box.y);
   rotateAroundCenter(box.w, box.h, ang);
+
+  // Apply text shear AFTER we rotate into plaque space
+  // (so it feels like letterforms are slanted within the plaque)
+  shearX(textShearX);
 
   const cx = box.w * 0.52;
   const cy = box.h * 0.58;
@@ -173,16 +251,16 @@ function drawWordInPlaque(word, box, ang, theme, opt) {
   // Shadow
   noStroke();
   fill(0, 0, 0, 90);
-  drawTrackedText(word, cx + px(0.006), cy + px(0.006), tracking);
+  drawTrackedText(word, cx + 6, cy + 6, tracking);
 
   // Main
   fill(theme.white);
   drawTrackedText(word, cx, cy, tracking);
 
-  // Underline (tight + centered)
+  // Underline (for STEEP)
   if (underline) {
     stroke(theme.white);
-    strokeWeight(px(0.012));
+    strokeWeight(10);
     strokeCap(SQUARE);
     const uw = box.w * 0.30;
     const uy = cy + size * 0.44;
@@ -193,21 +271,19 @@ function drawWordInPlaque(word, box, ang, theme, opt) {
 }
 
 function drawAmpBadgeBetween(steepBox, fastBox, ang, theme, opt) {
-  const { shadowOff, borderWeight, skewK, px } = opt;
+  const { shadowOff, borderWeight, skewK } = opt;
 
-  // A stable anchor point between plaques
-  const mid = {
-    x: lerp(steepBox.x + steepBox.w * 0.63, fastBox.x + fastBox.w * 0.07, 0.5),
-    y: lerp(steepBox.y + steepBox.h * 0.88, fastBox.y + fastBox.h * 0.08, 0.5),
-  };
+  // Stable badge position between plaques
+  const midX = lerp(steepBox.x + steepBox.w * 0.26, fastBox.x + fastBox.w * 0.36, 0.5);
+  const midY = lerp(steepBox.y + steepBox.h * 0.290, fastBox.y + fastBox.h * 0.16, 0.5);
 
-  const w = px(0.18);
-  const h = px(0.15);
+  const w = 170;
+  const h = 140;
   const skew = h * skewK;
 
   // Shadow
   push();
-  translate(mid.x + shadowOff.x * 0.7, mid.y + shadowOff.y * 0.7);
+  translate(midX + shadowOff.x * 0.7, midY + shadowOff.y * 0.7);
   rotateAroundCenter(w, h, ang);
   noStroke();
   fill(theme.shadow);
@@ -216,7 +292,7 @@ function drawAmpBadgeBetween(steepBox, fastBox, ang, theme, opt) {
 
   // Badge
   push();
-  translate(mid.x, mid.y);
+  translate(midX, midY);
   rotateAroundCenter(w, h, ang);
 
   // Plate
@@ -224,7 +300,7 @@ function drawAmpBadgeBetween(steepBox, fastBox, ang, theme, opt) {
   fill(theme.ink);
   drawParallelogram(0, 0, w, h, skew);
 
-  // Clean outline (white, subtle)
+  // Outline
   noFill();
   stroke(theme.white);
   strokeWeight(borderWeight);
@@ -232,39 +308,39 @@ function drawAmpBadgeBetween(steepBox, fastBox, ang, theme, opt) {
   strokeCap(SQUARE);
   drawParallelogramOutline(0, 0, w, h, skew);
 
-
-  // Ampersand (not skewed weirdly; centered and sized properly)
+  // Ampersand: centered, sized, and readable
   noStroke();
   fill(theme.white);
   textAlign(CENTER, CENTER);
-  textSize(px(0.11));
-  text("&", w * 0.52, h * 0.55);
+  textSize(108);
+  shearX(-.5);
+  text("&", w * 0.52, h * 0.56);
 
-  // Small "connector" notch to make it feel integrated
+  // Angular notch (connector accent)
   fill(theme.white);
   noStroke();
   beginShape();
-  vertex(w * 0.90, h * 0.18);
-  vertex(w * 0.74, h * 0.26);
-  vertex(w * 0.62, h * 0.40);
+  vertex(w * 0.62, h * 0.16);
+  vertex(w * 0.78, h * 0.25);
+  vertex(w * 0.64, h * 0.40);
   endShape(CLOSE);
 
   pop();
 }
 
-/* -------------------- Motifs -------------------- */
+/* ====================== MOTIFS ====================== */
 
-function drawMountainHint(steepBox, ang, theme, px) {
-  const mx = steepBox.x + steepBox.w * 0.30;
-  const my = steepBox.y - px(0.03);
-  const mw = px(0.28);
-  const mh = px(0.18);
+function drawMountainHint(steepBox, ang, theme) {
+  // Minimal mountain above/behind STEEP
+  const mx = steepBox.x + steepBox.w * 0.28;
+  const my = steepBox.y - 55;
+  const mw = 260;
+  const mh = 170;
 
   push();
   translate(mx, my);
   rotate(ang);
 
-  // Accent triangle
   noStroke();
   fill(theme.cool);
   beginShape();
@@ -273,7 +349,6 @@ function drawMountainHint(steepBox, ang, theme, px) {
   vertex(mw, mh);
   endShape(CLOSE);
 
-  // Cut-out
   fill(255);
   beginShape();
   vertex(mw * 0.18, mh);
@@ -281,7 +356,6 @@ function drawMountainHint(steepBox, ang, theme, px) {
   vertex(mw * 0.84, mh);
   endShape(CLOSE);
 
-  // Snow cap
   fill(theme.white);
   beginShape();
   vertex(mw * 0.44, mh * 0.33);
@@ -293,8 +367,9 @@ function drawMountainHint(steepBox, ang, theme, px) {
   pop();
 }
 
-function drawSpeedLines(fastBox, ang, theme, px) {
-  const baseX = fastBox.x - px(0.20);
+function drawSpeedLines(fastBox, ang, theme) {
+  // Speed lines left of FAST
+  const baseX = fastBox.x - 220;
   const baseY = fastBox.y + fastBox.h * 0.58;
 
   push();
@@ -302,9 +377,9 @@ function drawSpeedLines(fastBox, ang, theme, px) {
   rotate(ang);
 
   const lines = [
-    { y: -px(0.07), w: px(0.66), sw: px(0.016), c: theme.warm },
-    { y: -px(0.02), w: px(0.78), sw: px(0.014), c: theme.warm2 },
-    { y:  px(0.03), w: px(0.70), sw: px(0.014), c: theme.warm },
+    { y: -70, w: 650, sw: 16, c: theme.warm },
+    { y: -20, w: 780, sw: 14, c: theme.warm2 },
+    { y:  30, w: 700, sw: 14, c: theme.warm },
   ];
 
   for (const ln of lines) {
@@ -313,16 +388,16 @@ function drawSpeedLines(fastBox, ang, theme, px) {
     strokeCap(SQUARE);
     line(0, ln.y, ln.w, ln.y);
 
-    // Minimal "break" cut-out
+    // Minimal break
     stroke(255);
-    strokeWeight(ln.sw + px(0.006));
+    strokeWeight(ln.sw + 6);
     line(ln.w * 0.46, ln.y, ln.w * 0.64, ln.y);
   }
 
   pop();
 }
 
-/* -------------------- Geometry + Text -------------------- */
+/* ====================== GEOMETRY + TEXT ====================== */
 
 function rotateAroundCenter(w, h, ang) {
   translate(w / 2, h / 2);
@@ -351,6 +426,7 @@ function drawParallelogramOutline(x, y, w, h, skew) {
 function drawTrackedText(str, cx, cy, tracking) {
   textAlign(LEFT, CENTER);
 
+  // width with tracking
   let total = 0;
   for (let i = 0; i < str.length; i++) {
     total += textWidth(str[i]);
@@ -360,7 +436,7 @@ function drawTrackedText(str, cx, cy, tracking) {
   let x = cx - total / 2;
   for (let i = 0; i < str.length; i++) {
     const ch = str[i];
-    //shearX(0.-35);
+    shearX(-.1);
     text(ch, x, cy);
     x += textWidth(ch) + tracking;
   }
